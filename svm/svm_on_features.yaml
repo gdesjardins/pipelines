@@ -1,4 +1,4 @@
-!obj:pipeline.svm.multiclass_linear_svm.SVMOnFeatures {
+!obj:pipelines.svm.svm_on_features.SVMOnFeatures {
     "model": !obj:pylearn2.utils.serial.load {
         "filepath": "model.pkl"
     },
@@ -8,8 +8,7 @@
     },
     "trainset": !obj:pylearn2.datasets.mnist.MNIST { "which_set": 'train'},
     "testset": !obj:pylearn2.datasets.mnist.MNIST { "which_set": 'test'},
-    #"C_list": [.01,.02,.05,.1,.15,.2,.5,1,5,10],
-    "C_list": [.01,.1,1,10],
+    "C_list": [1e-3,1e-2,1e-1,1,10],
     "save_fname": 'best_svm.pkl',
     "model_call_kwargs": { 'output_type': 'hs'}
 }

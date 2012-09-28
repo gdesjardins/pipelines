@@ -6,6 +6,7 @@ import pickle
 import logging
 from pylearn2.utils import options_parser
 from pylearn2.utils import serial
+from pylearn2.datasets.preprocessing import Standardize
 from scikits.learn.svm import LinearSVC
 
 
@@ -15,7 +16,8 @@ logging.basicConfig(level=logging.INFO)
 class SVMOnFeatures():
     
     def __init__(self, model, svm, trainset, testset, validset=None,
-                 C_list=None, save_fname=None, model_call_kwargs=None):
+                 C_list=None, save_fname=None, model_call_kwargs=None,
+                 standardize=False):
         """
         Performs cross-validation of a linear SVM on features extracted by a unsupervised
         learning module.
@@ -39,6 +41,8 @@ class SVMOnFeatures():
             Output filename to store trained svm model.
         model_call_kwargs: dict (optional)
             Dictionary of arguments to pass to model.call.
+        standardize: boolean
+            Standardize the model output, before feeding to SVM.
         """
         assert hasattr(model, 'perform')
         self.model = model
@@ -47,18 +51,24 @@ class SVMOnFeatures():
         self.validset = validset
         self.testset = testset
         if C_list is None:
-            C_list = [.01,.1,1,10]
+            C_list = [1e-3,1e-2,1e-1,1,10]
         self.C_list = C_list
         self.save_fname = save_fname
         self.model_call_kwargs = model_call_kwargs
 
     def extract_features(self):
-        """Preprocess the data given the models representation."""
+        postproc = Standardize()
         self.model.fn = self.model.function("perform", self.model_call_kwargs)
+        # extract new representation for training data
         self.trainset.X = self.model.perform(self.trainset.X)
+        postproc.apply(self.trainset, can_fit=True)
+        # extract new representation for test data
         self.testset.X = self.model.perform(self.testset.X)
+        postproc.apply(self.testset, can_fit=False)
+        # extract new representation for validation data
         if self.validset:
             self.validset.X = self.model.perform(self.validset.X)
+            postproc.apply(self.validset, can_fit=False)
  
     def run(self, retrain_on_valid=True):
         self.extract_features()
