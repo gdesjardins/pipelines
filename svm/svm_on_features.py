@@ -4,7 +4,6 @@ import numpy
 import theano
 import pickle
 import logging
-from pylearn2.utils import options_parser
 from pylearn2.utils import serial
 from pylearn2.datasets import dense_design_matrix
 from pylearn2.datasets.preprocessing import Standardize
@@ -17,18 +16,21 @@ logging.basicConfig(level=logging.INFO)
 
 class pylearn2_svm_callback(TrainingCallback):
 
-    def __init__(self, **kwargs):
+    def __init__(self, results_prefix='', retrain_on_valid=False, **kwargs):
+        self.retrain_on_valid = retrain_on_valid
+        self.results_prefix = results_prefix
         self.svm_on_features = SVMOnFeatures(**kwargs)
     
     def __call__(self, model, dataset, algorithm):
-        best_svm, valid_error, test_error = self.svm_on_features.run()
+        best_svm, valid_error, test_error = self.svm_on_features.run(
+                retrain_on_valid = self.retrain_on_valid)
         i = model.batches_seen
         if not hasattr(model, 'results'):
             model.results = {}
-        model.results['batches_seen'] = i
-        model.results['valerr_%i' % i] = valid_error
-        model.results['tsterr_%i' % i] = test_error
-        model.results['C%i' % i] = best_svm.C
+        model.results['%sbatches_seen' % self.results_prefix] = i
+        model.results['%svalerr_%i' % (self.results_prefix, i)] = valid_error
+        model.results['%ststerr_%i' % (self.results_prefix, i)] = test_error
+        model.results['%sC%i' % (self.results_prefix, i)] = best_svm.C
 
 
 class SVMOnFeatures():
@@ -74,7 +76,7 @@ class SVMOnFeatures():
 
     def extract_features(self, dset, preproc=None, can_fit=False):
         new_dset = dense_design_matrix.DenseDesignMatrix()
-        new_dset.X = self.model.perform(dset.X)
+        new_dset.X = self.model.fn(dset.X)
         new_dset.y = dset.y
         if preproc:
             preproc.apply(new_dset, can_fit=True)
