@@ -9,8 +9,6 @@ from pylearn2.datasets import dense_design_matrix
 from pylearn2.datasets.preprocessing import Standardize
 from pylearn2.training_callbacks.training_callback import TrainingCallback
 from scikits.learn.svm import LinearSVC
-from pylearn2.models import svm
-
 
 logging.basicConfig(level=logging.INFO)
 
@@ -22,15 +20,31 @@ class pylearn2_svm_callback(TrainingCallback):
         self.svm_on_features = SVMOnFeatures(**kwargs)
     
     def __call__(self, model, dataset, algorithm):
+        if not hasattr(model, 'results'):
+            model.results = {}
+
+        if model.batches_seen == 0:
+            return
+
+        i = model.batches_seen
         best_svm, valid_error, test_error = self.svm_on_features.run(
                 retrain_on_valid = self.retrain_on_valid)
         i = model.batches_seen
-        if not hasattr(model, 'results'):
-            model.results = {}
         model.results['%sbatches_seen' % self.results_prefix] = i
         model.results['%svalerr_%i' % (self.results_prefix, i)] = valid_error
         model.results['%ststerr_%i' % (self.results_prefix, i)] = test_error
         model.results['%sC%i' % (self.results_prefix, i)] = best_svm.C
+
+        fp = open('svm_callback.log', 'a')
+        fp.write('Batches seen: %i' % i)
+        fp.write('\t best validation error: %f' % valid_error)
+        fp.write('\t best test error: %f' % test_error)
+        fp.write('\t best svm.C: %f' % best_svm.C)
+        fp.write('\n')
+        fp.close()
+
+        if model.jobman_channel:
+            model.jobman_channel.save()
 
 
 class SVMOnFeatures():
@@ -68,6 +82,7 @@ class SVMOnFeatures():
         self.validset = validset
         self.testset = testset
         self.model = model
+        self.model.do_theano()
         self.model_call_kwargs = model_call_kwargs
         if C_list is None:
             C_list = [1e-3,1e-2,1e-1,1,10]
@@ -76,6 +91,7 @@ class SVMOnFeatures():
 
     def extract_features(self, dset, preproc=None, can_fit=False):
         new_dset = dense_design_matrix.DenseDesignMatrix()
+        import pdb; pdb.set_trace()
         new_dset.X = self.model.fn(dset.X)
         new_dset.y = dset.y
         if preproc:
