@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.INFO)
 
 class pylearn2_svm_callback(TrainingCallback):
 
-    def __init__(self, run_every, results_prefix='', retrain_on_valid=False, **kwargs):
+    def __init__(self, run_every, results_prefix='', retrain_on_valid=True, **kwargs):
         self.run_every = run_every
         self.retrain_on_valid = retrain_on_valid
         self.results_prefix = results_prefix
@@ -119,7 +119,7 @@ class SVMOnFeatures():
 
         return new_dset
  
-    def run(self, retrain_on_valid=False):
+    def run(self, retrain_on_valid=True):
         # Extract features from model.
         preproc = Standardize()
         self.model.fn = self.model.function("perform", **self.model_call_kwargs)
@@ -138,8 +138,8 @@ class SVMOnFeatures():
         # Optionally retrain on validation set, using optimal hyperparams.
         if self.validset and retrain_on_valid:
             retrain_svm(best_svm,
-                    (newtrain.X, self.trainset_y)
-                    (newvalid.X, self.trainset_y))
+                    (newtrain.X, self.trainset_y),
+                    (newvalid.X, self.validset_y))
 
         test_error = compute_test_error(best_svm, (newtest.X, self.testset_y))
         logging.info('Test error = %f' % test_error)
