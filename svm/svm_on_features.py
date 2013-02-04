@@ -47,6 +47,14 @@ class pylearn2_svm_callback(TrainingCallback):
             model.jobman_state.update(results)
             model.jobman_channel.save()
 
+def is_onehot(y):
+    return y.ndim == 2 and (numpy.sum(y, axis=1) == 1).all()
+
+def process_labels(y):
+    if is_onehot(y):
+        return numpy.argmax(y, axis=1)
+    else:
+        return y.flatten()
 
 class SVMOnFeatures():
    
@@ -90,6 +98,9 @@ class SVMOnFeatures():
             C_list = [1e-3,1e-2,1e-1,1,10]
         self.C_list = C_list
         self.save_fname = save_fname
+        self.trainset_y = process_labels(self.trainset.y)
+        self.validset_y = process_labels(self.validset.y)
+        self.testset_y  = process_labels(self.testset.y)
 
     def extract_features(self, dset, preproc=None, can_fit=False):
         new_dset = dense_design_matrix.DenseDesignMatrix()
@@ -106,8 +117,6 @@ class SVMOnFeatures():
         if preproc:
             preproc.apply(new_dset, can_fit=True)
 
-        new_dset.y = dset.y
-
         return new_dset
  
     def run(self, retrain_on_valid=False):
@@ -120,14 +129,19 @@ class SVMOnFeatures():
                    self.extract_features(self.validset, preproc, can_fit=False)
 
         # Find optimal SVM hyper-parameters.
-        (best_svm, valid_error) = cross_validate_svm(self.svm, newtrain, newvalid, self.C_list)
+        (best_svm, valid_error) = cross_validate_svm(self.svm,
+                (newtrain.X, self.trainset_y),
+                (newvalid.X, self.validset_y),
+                self.C_list)
         logging.info('Best validation error for C=%f : %f' % (best_svm.C, valid_error))
 
         # Optionally retrain on validation set, using optimal hyperparams.
         if self.validset and retrain_on_valid:
-            retrain_svm(best_svm, newtrain, newvalid)
+            retrain_svm(best_svm,
+                    (newtrain.X, self.trainset_y)
+                    (newvalid.X, self.trainset_y))
 
-        test_error = compute_test_error(best_svm, newtest)
+        test_error = compute_test_error(best_svm, (newtest.X, self.testset_y))
         logging.info('Test error = %f' % test_error)
         if self.save_fname:
             fp = open(self.save_fname, 'w')
@@ -137,7 +151,7 @@ class SVMOnFeatures():
 
 
 import time
-def cross_validate_svm(svm, trainset, validset, C_list):
+def cross_validate_svm(svm, (train_X, train_y), (valid_X, valid_y), C_list):
     best_svm = None
     best_error = numpy.Inf
     print 'C_list = ', C_list
@@ -148,9 +162,9 @@ def cross_validate_svm(svm, trainset, validset, C_list):
             svm.set_params(C = C)
         else:
             svm.C = C
-        svm.fit(trainset.X, trainset.y.flatten())
-        predy = svm.predict(validset.X)
-        error = (validset.y != predy).mean()
+        svm.fit(train_X, train_y)
+        predy = svm.predict(valid_X)
+        error = (valid_y != predy).mean()
         if error < best_error:
             logging.info('SVM(C=%f): valid_error=%f **' % (C, error))
             best_error = error
@@ -163,18 +177,17 @@ def cross_validate_svm(svm, trainset, validset, C_list):
     return (best_svm, best_error)
 
 
-def retrain_svm(svm, trainset, validset):
-    assert validset is not None
+def retrain_svm(svm, (train_X, train_y), (valid_X, valid_y)):
     logging.info('Retraining on {train, validation} sets.')
-    full_train_X = numpy.vstack((trainset.X, validset.X))
-    full_train_y = numpy.hstack((trainset.y, validset.y))
+    full_train_X = numpy.vstack((train_X, valid_X))
+    full_train_y = numpy.hstack((train_y, valid_y))
     svm.fit(full_train_X, full_train_y.flatten())
     return svm
 
 
-def compute_test_error(svm, testset):
-    test_predy = svm.predict(testset.X)
-    return (testset.y != test_predy).mean()
+def compute_test_error(svm, (test_X, test_y)):
+    test_predy = svm.predict(test_X)
+    return (test_y != test_predy).mean()
 
 
 if __name__ == '__main__':
