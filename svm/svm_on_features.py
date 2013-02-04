@@ -14,26 +14,26 @@ logging.basicConfig(level=logging.INFO)
 
 class pylearn2_svm_callback(TrainingCallback):
 
-    def __init__(self, results_prefix='', retrain_on_valid=False, **kwargs):
+    def __init__(self, run_every, results_prefix='', retrain_on_valid=False, **kwargs):
+        self.run_every = run_every
         self.retrain_on_valid = retrain_on_valid
         self.results_prefix = results_prefix
         self.svm_on_features = SVMOnFeatures(**kwargs)
     
     def __call__(self, model, dataset, algorithm):
-        if not hasattr(model, 'results'):
-            model.results = {}
-
-        if model.batches_seen == 0:
+        if model.batches_seen == 0 or (model.batches_seen % self.run_every) != 0:
             return
 
         i = model.batches_seen
         best_svm, valid_error, test_error = self.svm_on_features.run(
                 retrain_on_valid = self.retrain_on_valid)
         i = model.batches_seen
-        model.results['%sbatches_seen' % self.results_prefix] = i
-        model.results['%svalerr_%i' % (self.results_prefix, i)] = valid_error
-        model.results['%ststerr_%i' % (self.results_prefix, i)] = test_error
-        model.results['%sC%i' % (self.results_prefix, i)] = best_svm.C
+
+        results = {}
+        results['%sbatches_seen' % self.results_prefix] = i
+        results['%svalerr_%i' % (self.results_prefix, i)] = valid_error
+        results['%ststerr_%i' % (self.results_prefix, i)] = test_error
+        results['%sC%i' % (self.results_prefix, i)] = best_svm.C
 
         fp = open('svm_callback.log', 'a')
         fp.write('Batches seen: %i' % i)
@@ -43,15 +43,18 @@ class pylearn2_svm_callback(TrainingCallback):
         fp.write('\n')
         fp.close()
 
-        if model.jobman_channel:
+        if hasattr(model, 'jobman_channel') and model.jobman_channel:
+            model.jobman_state.update(results)
             model.jobman_channel.save()
 
 
 class SVMOnFeatures():
-    
+   
     def __init__(self, svm, trainset, testset,
                  model=None, model_call_kwargs=None,
-                 validset=None, C_list=None, save_fname=None):
+                 validset=None,
+                 C_list=None,
+                 save_fname=None):
         """
         Performs cross-validation of a linear SVM on features extracted by a unsupervised
         learning module.
@@ -76,13 +79,12 @@ class SVMOnFeatures():
         save_fname: string
             Output filename to store trained svm model.
         """
-        assert hasattr(model, 'perform')
         self.svm = svm
         self.trainset = trainset
         self.validset = validset
         self.testset = testset
         self.model = model
-        self.model.do_theano()
+        #self.model.do_theano()
         self.model_call_kwargs = model_call_kwargs
         if C_list is None:
             C_list = [1e-3,1e-2,1e-1,1,10]
@@ -91,11 +93,21 @@ class SVMOnFeatures():
 
     def extract_features(self, dset, preproc=None, can_fit=False):
         new_dset = dense_design_matrix.DenseDesignMatrix()
-        import pdb; pdb.set_trace()
-        new_dset.X = self.model.fn(dset.X)
-        new_dset.y = dset.y
+        if  str(self.model.__class__).find('DBM') != -1:
+            self.model.set_batch_size(len(dset.X))
+            self.model.setup_pos_func(dset.X)
+            self.model.pos_func()
+            new_dset.X = self.model.fn(dset.X)
+        elif self.model:
+            new_dset.X = self.model.fn(dset.X)
+        else:
+            new_dset.X = dset.X
+
         if preproc:
             preproc.apply(new_dset, can_fit=True)
+
+        new_dset.y = dset.y
+
         return new_dset
  
     def run(self, retrain_on_valid=False):
@@ -106,13 +118,15 @@ class SVMOnFeatures():
         newtest  = self.extract_features(self.testset, preproc, can_fit=False)
         newvalid = newtest if not self.validset else\
                    self.extract_features(self.validset, preproc, can_fit=False)
+
         # Find optimal SVM hyper-parameters.
-        (best_svm, valid_error) = cross_validate_svm(self.svm,
-                newtrain, newvalid, self.C_list)
+        (best_svm, valid_error) = cross_validate_svm(self.svm, newtrain, newvalid, self.C_list)
         logging.info('Best validation error for C=%f : %f' % (best_svm.C, valid_error))
+
         # Optionally retrain on validation set, using optimal hyperparams.
         if self.validset and retrain_on_valid:
             retrain_svm(best_svm, newtrain, newvalid)
+
         test_error = compute_test_error(best_svm, newtest)
         logging.info('Test error = %f' % test_error)
         if self.save_fname:
@@ -134,7 +148,7 @@ def cross_validate_svm(svm, trainset, validset, C_list):
             svm.set_params(C = C)
         else:
             svm.C = C
-        svm.fit(trainset.X, trainset.y)
+        svm.fit(trainset.X, trainset.y.flatten())
         predy = svm.predict(validset.X)
         error = (validset.y != predy).mean()
         if error < best_error:
@@ -154,7 +168,7 @@ def retrain_svm(svm, trainset, validset):
     logging.info('Retraining on {train, validation} sets.')
     full_train_X = numpy.vstack((trainset.X, validset.X))
     full_train_y = numpy.hstack((trainset.y, validset.y))
-    svm.fit(full_train_X, full_train_y)
+    svm.fit(full_train_X, full_train_y.flatten())
     return svm
 
 
@@ -170,4 +184,4 @@ if __name__ == '__main__':
                         help='A YAML configuration file specifying the training procedure')
     args = parser.parse_args()
     obj = serial.load_train_file(args.config)
-    obj.run(retrain_on_valid=False)
+    obj.run(retrain_on_valid=True)
