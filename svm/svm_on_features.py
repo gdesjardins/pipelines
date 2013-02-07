@@ -110,7 +110,12 @@ class SVMOnFeatures():
             self.model.pos_func()
             new_dset.X = self.model.fn(dset.X)
         elif self.model:
-            new_dset.X = self.model.fn(dset.X)
+            outsize = self.model.fn(dset.X[:1]).shape[1]
+            X = numpy.zeros((len(dset.X), outsize))
+            for i in xrange(0, len(X), self.model.batch_size):
+                batch = dset.X[i : i + self.model.batch_size]
+                X[i : i + len(batch)] = self.model.fn(batch)
+            new_dset.X = X
         else:
             new_dset.X = dset.X
 
