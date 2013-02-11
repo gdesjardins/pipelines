@@ -14,9 +14,8 @@ logging.basicConfig(level=logging.INFO)
 
 class pylearn2_svm_callback(TrainingCallback):
 
-    def __init__(self, run_every, results_prefix='', retrain_on_valid=True, **kwargs):
+    def __init__(self, run_every, results_prefix='', **kwargs):
         self.run_every = run_every
-        self.retrain_on_valid = retrain_on_valid
         self.results_prefix = results_prefix
         self.svm_on_features = SVMOnFeatures(**kwargs)
     
@@ -25,12 +24,12 @@ class pylearn2_svm_callback(TrainingCallback):
             return
 
         i = model.batches_seen
-        best_svm, valid_error, test_error = self.svm_on_features.run(
-                retrain_on_valid = self.retrain_on_valid)
+        best_svm, (train_error, valid_error, test_error) = self.svm_on_features.run()
         i = model.batches_seen
 
         results = {}
         results['%sbatches_seen' % self.results_prefix] = i
+        results['%strerr_%i' % (self.results_prefix, i)] = train_error
         results['%svalerr_%i' % (self.results_prefix, i)] = valid_error
         results['%ststerr_%i' % (self.results_prefix, i)] = test_error
         results['%sC%i' % (self.results_prefix, i)] = best_svm.C
@@ -62,7 +61,8 @@ class SVMOnFeatures():
                  model=None, model_call_kwargs=None,
                  validset=None,
                  C_list=None,
-                 save_fname=None):
+                 save_fname=None,
+                 retrain_on_valid=True):
         """
         Performs cross-validation of a linear SVM on features extracted by a unsupervised
         learning module.
@@ -98,6 +98,7 @@ class SVMOnFeatures():
             C_list = [1e-3,1e-2,1e-1,1,10]
         self.C_list = C_list
         self.save_fname = save_fname
+        self.retrain_on_valid=retrain_on_valid
         self.trainset_y = process_labels(self.trainset.y)
         self.validset_y = process_labels(self.validset.y)
         self.testset_y  = process_labels(self.testset.y)
@@ -124,24 +125,25 @@ class SVMOnFeatures():
 
         return new_dset
  
-    def run(self, retrain_on_valid=True):
+    def run(self):
         # Extract features from model.
         preproc = Standardize()
-        self.model.fn = self.model.function("perform", **self.model_call_kwargs)
+        if self.model:
+            self.model.fn = self.model.function("perform", **self.model_call_kwargs)
         newtrain = self.extract_features(self.trainset, preproc, can_fit=True)
         newtest  = self.extract_features(self.testset, preproc, can_fit=False)
         newvalid = newtest if not self.validset else\
                    self.extract_features(self.validset, preproc, can_fit=False)
 
         # Find optimal SVM hyper-parameters.
-        (best_svm, valid_error) = cross_validate_svm(self.svm,
+        (best_svm, train_error, valid_error) = cross_validate_svm(self.svm,
                 (newtrain.X, self.trainset_y),
                 (newvalid.X, self.validset_y),
                 self.C_list)
-        logging.info('Best validation error for C=%f : %f' % (best_svm.C, valid_error))
+        logging.info('Best train/valid error for C=%f : %f \t %f' % (best_svm.C, train_error, valid_error))
 
         # Optionally retrain on validation set, using optimal hyperparams.
-        if self.validset and retrain_on_valid:
+        if self.validset and self.retrain_on_valid:
             retrain_svm(best_svm,
                     (newtrain.X, self.trainset_y),
                     (newvalid.X, self.validset_y))
@@ -152,13 +154,15 @@ class SVMOnFeatures():
             fp = open(self.save_fname, 'w')
             pickle.dump(best_svm, fp)
             fp.close()
-        return (best_svm, valid_error, test_error)
+        return best_svm, (train_error, valid_error, test_error)
 
 
 import time
 def cross_validate_svm(svm, (train_X, train_y), (valid_X, valid_y), C_list):
     best_svm = None
-    best_error = numpy.Inf
+    best_train_error = numpy.Inf
+    best_valid_error = numpy.Inf
+
     print 'C_list = ', C_list
     for C in C_list:
         print 'C = ', C
@@ -167,19 +171,29 @@ def cross_validate_svm(svm, (train_X, train_y), (valid_X, valid_y), C_list):
             svm.set_params(C = C)
         else:
             svm.C = C
+        
+        # Fit training set.
         svm.fit(train_X, train_y)
-        predy = svm.predict(valid_X)
-        error = (valid_y != predy).mean()
-        if error < best_error:
-            logging.info('SVM(C=%f): valid_error=%f **' % (C, error))
-            best_error = error
+
+        # Measure training error.
+        train_predy = svm.predict(train_X)
+        train_error = (train_y != train_predy).mean()
+        # Measure validation error.
+        valid_predy = svm.predict(valid_X)
+        valid_error = (valid_y != valid_predy).mean()
+
+        # If beset validation error...
+        if valid_error < best_valid_error:
+            logging.info('SVM(C=%f): train_error=%f valid_error=%f **' % (C, train_error, valid_error))
+            best_train_error = train_error
+            best_valid_error = valid_error
             best_svm = copy.deepcopy(svm)
             # Numpy bug workaround: copy module does not respect C/F ordering.
             best_svm.raw_coef_ = numpy.asarray(best_svm.raw_coef_, order='F')
         else:
-            logging.info('SVM(C=%f): valid_error=%f' % (C, error))
+            logging.info('SVM(C=%f): train_error=%f valid_error=%f' % (C, train_error, valid_error))
         logging.info('Elapsed time: %f' % (time.time() - t1))
-    return (best_svm, best_error)
+    return (best_svm, best_train_error, best_valid_error)
 
 
 def retrain_svm(svm, (train_X, train_y), (valid_X, valid_y)):
@@ -202,4 +216,4 @@ if __name__ == '__main__':
                         help='A YAML configuration file specifying the training procedure')
     args = parser.parse_args()
     obj = serial.load_train_file(args.config)
-    obj.run(retrain_on_valid=True)
+    obj.run()
