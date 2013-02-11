@@ -1,0 +1,30 @@
+!obj:pipelines.logreg.logreg_on_features.LogRegOnFeatures {
+    "model": !obj:pylearn2.utils.serial.load {
+        "filepath": "model.pkl"
+    },
+    "trainset": !obj:pylearn2.datasets.mnist_variations.MNIST_variations {
+        "which_set": 'train',
+        "variation": &variation 'background_images',
+        "center": 1,
+        "shuffle": 1,
+        "one_hot": 1,
+    },
+    "validset": !obj:pylearn2.datasets.mnist_variations.MNIST_variations {
+        "which_set": 'valid',
+        "variation": *variation,
+        "center": 1,
+        "shuffle": 1,
+        "one_hot": 1,
+    },
+    "testset": !obj:pylearn2.datasets.mnist_variations.MNIST_variations {
+        "which_set": 'test',
+        "variation": *variation,
+        "center": 1,
+        "shuffle": 1,
+        "one_hot": 1,
+    },
+    "n_epoch_list": [10, 15, 20, 25, 30, 35, 50, 100],
+    "save_fname": '',
+    "model_call_kwargs": { 'output_type': 'g+h'}
+}
+
